@@ -1,0 +1,7 @@
+# DECISIONS.md
+
+1. **Indexes.** Unique `(emp_code, date)` is the punch-in race guard and also serves per-employee queries and the monthly report. `(date desc, emp_code)` serves the attendance list sort and month-range analytics. `(status, date desc, emp_code)` serves status filters. `(emp_code, punch_in desc)` finds the latest open punch for punch-out. On employees: unique `emp_code`, `(department, joined_on)` for headcount and the trend, and `(department, emp_code)` for the list. Rejected: a separate index on `status` alone, because it is too unselective and the compound one covers it.
+2. **Punch-in race.** Both requests compute the same `(emp_code, date)` and call `insert_one`. MongoDB's unique index lets exactly one succeed. The other gets `DuplicateKeyError`, which I turn into 409. There is no read-before-write.
+3. **Ties.** The database ranks with `$rank` (1, 2, 2, 4) and only then I keep `rank <= limit`. If two people tie at the cutoff, both are returned, so there can be more than `limit` rows. Rows are ordered by minutes, then `emp_code`.
+4. **Headcount.** The summary pipeline starts from `employees` (joined on or before month end), not from the logs. Logs are added with `$unionWith` and merged per `emp_code`, so someone with no logs still produces one row and counts.
+5. **100x data.** I would pre-aggregate daily per-department counters (or a materialized view updated at punch time) instead of scanning a month of logs on every analytics call, and store dates as real dates so the `$dateFromString` conversion in the pipelines is not needed.
